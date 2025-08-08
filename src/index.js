@@ -3,7 +3,7 @@ const exec = require('@actions/exec');
 const tc = require('@actions/tool-cache');
 const fs = require('fs-extra');
 const path = require('path');
-const fetch = require('node-fetch');
+const https = require('https');
 const yauzl = require('yauzl');
 
 class SkriptTester {
@@ -84,8 +84,7 @@ class SkriptTester {
     let downloadUrl;
     if (serverSoftware.toLowerCase() === 'paper') {
       // Отримуємо найновішу збірку Paper
-      const buildsResponse = await fetch(`https://api.papermc.io/v2/projects/paper/versions/${minecraftVersion}/builds`);
-      const buildsData = await buildsResponse.json();
+      const buildsData = await this.fetchJson(`https://api.papermc.io/v2/projects/paper/versions/${minecraftVersion}/builds`);
       const latestBuild = buildsData.builds[buildsData.builds.length - 1];
       downloadUrl = `https://api.papermc.io/v2/projects/paper/versions/${minecraftVersion}/builds/${latestBuild.build}/downloads/${latestBuild.downloads.application.name}`;
     } else {
@@ -97,6 +96,29 @@ class SkriptTester {
     await fs.copy(serverPath, this.serverJar);
     
     core.info('✅ Server downloaded successfully');
+  }
+
+  async fetchJson(url) {
+    return new Promise((resolve, reject) => {
+      https.get(url, (res) => {
+        let data = '';
+        
+        res.on('data', (chunk) => {
+          data += chunk;
+        });
+        
+        res.on('end', () => {
+          try {
+            const json = JSON.parse(data);
+            resolve(json);
+          } catch (error) {
+            reject(new Error(`Failed to parse JSON: ${error.message}`));
+          }
+        });
+      }).on('error', (error) => {
+        reject(new Error(`HTTP request failed: ${error.message}`));
+      });
+    });
   }
 
   async downloadSkript(version) {
