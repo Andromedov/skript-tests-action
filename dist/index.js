@@ -34356,6 +34356,7 @@ class SkriptTester {
       core.info(`  Skript: ${skriptVersion}`);
       core.info(`  Server: ${serverSoftware}`);
       core.info(`  Scripts path: ${pathToSkripts}`);
+
       await this.setupWorkDirectory();
       await this.downloadServer(serverSoftware, minecraftVersion);
       await this.downloadSkript(skriptVersion);
@@ -34544,10 +34545,10 @@ class SkriptTester {
     let serverOutput = '';
     let serverProcess;
     let startupComplete = false;
-    let skriptLoadComplete = false;
     
     const options = {
       cwd: this.workDir,
+      input: Buffer.from(''),
       listeners: {
         stdout: (data) => {
           const output = data.toString();
@@ -34560,15 +34561,6 @@ class SkriptTester {
               if (line.includes('Done (') && line.includes('s)! For help, type "help"')) {
                 startupComplete = true;
                 core.info('✅ Server startup completed');
-              }
-              
-              if (line.includes('[Skript]') && (
-                line.includes('Successfully loaded') ||
-                line.includes('Loaded') ||
-                line.includes('scripts loaded')
-              )) {
-                skriptLoadComplete = true;
-                core.info('✅ Skript loading completed');
               }
               
               if (line.includes('[Skript]') || 
@@ -34599,13 +34591,26 @@ class SkriptTester {
 
     try {
       core.info('🚀 Starting Minecraft server...');
-      serverProcess = exec.exec('java', javaArgs, options);
+      const { spawn } = __nccwpck_require__(5317);
+      
+      serverProcess = spawn('java', javaArgs, {
+        cwd: this.workDir,
+        stdio: ['pipe', 'pipe', 'pipe']
+      });
+      
+      serverProcess.stdout.on('data', (data) => {
+        options.listeners.stdout(data);
+      });
+      
+      serverProcess.stderr.on('data', (data) => {
+        options.listeners.stderr(data);
+      });
       
       const maxWaitTime = 120000; // 2 хвилини
       const checkInterval = 1000; // 1 секунда
       let waitedTime = 0;
       
-      while (waitedTime < maxWaitTime) {
+      while (waitedTime < maxWaitTime && serverProcess && !serverProcess.killed) {
         await this.sleep(checkInterval);
         waitedTime += checkInterval;
         
@@ -34624,13 +34629,19 @@ class SkriptTester {
         core.warning('⚠️ Server startup timeout reached, analyzing partial results');
       }
       
-      core.info('🛑 Stopping server for analysis...');
-      await this.stopServer();
-      
-      try {
-        await serverProcess;
-      } catch (error) {
-        core.info('Server stopped');
+      if (serverProcess && !serverProcess.killed) {
+        core.info('🛑 Sending stop command to server...');
+        serverProcess.stdin.write('stop\n');
+        await this.sleep(10000);
+        if (!serverProcess.killed) {
+          core.info('🔪 Force killing server process...');
+          serverProcess.kill('SIGTERM');
+          setTimeout(() => {
+            if (!serverProcess.killed) {
+              serverProcess.kill('SIGKILL');
+            }
+          }, 5000);
+        }
       }
       
     } catch (error) {
@@ -34740,20 +34751,6 @@ class SkriptTester {
       else if (line.includes('Successfully loaded') && 
                (line.includes('script') || line.includes('file'))) {
         core.info('✅ Skript finished loading scripts');
-      }
-    }
-  }
-
-  async stopServer() {
-    const stopFile = path.join(this.workDir, 'stop.txt');
-    await fs.writeFile(stopFile, 'stop\n');
-    
-    const serverPidFile = path.join(this.workDir, 'server.pid');
-    if (await fs.pathExists(serverPidFile)) {
-      try {
-        const pid = await fs.readFile(serverPidFile, 'utf8');
-        process.kill(parseInt(pid.trim()), 'SIGTERM');
-      } catch (error) {
       }
     }
   }
