@@ -10,7 +10,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/your-username/skript-tests-action.git"
+    "url": "git+https://github.com/Andromedov/skript-tests-action.git"
   },
   "keywords": [
     "github-actions",
