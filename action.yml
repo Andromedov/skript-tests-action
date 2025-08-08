@@ -1,0 +1,39 @@
+name: 'Skript Tests Action'
+description: 'Test Skript scripts by running them in a temporary Minecraft server'
+author: 'Andromedov'
+
+inputs:
+  minecraft-version:
+    description: 'Minecraft version to use'
+    required: true
+    default: '1.21'
+  skript-version:
+    description: 'Skript version to use'
+    required: true
+    default: '2.12.1'
+  path-to-skripts:
+    description: 'Path to directory containing Skript files'
+    required: true
+    default: './scripts'
+  path-to-addons:
+    description: 'Path to directory containing Skript addons'
+    required: false
+    default: 'addons'
+  server-software:
+    description: 'Server software to use (paper, spigot, bukkit)'
+    required: false
+    default: 'paper'
+
+outputs:
+  test-results:
+    description: 'Test results summary'
+  failed-scripts:
+    description: 'List of scripts that failed to load'
+
+runs:
+  using: 'node20'
+  main: 'dist/index.js'
+
+branding:
+  icon: 'check-circle'
+  color: 'green'
