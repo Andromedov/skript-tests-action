@@ -29,6 +29,8 @@ outputs:
     description: 'Test results summary'
   failed-scripts:
     description: 'List of scripts that failed to load'
+  error-details:
+    description: 'Detailed error information for each failed script'
 
 runs:
   using: 'node20'
