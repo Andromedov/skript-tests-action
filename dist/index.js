@@ -34348,7 +34348,7 @@ class SkriptTester {
       const minecraftVersion = core.getInput('minecraft-version') || '1.21';
       const skriptVersion = core.getInput('skript-version') || '2.12.1';
       const pathToSkripts = core.getInput('path-to-skripts') || './scripts';
-      const pathToAddons = core.getInput('path-to-addons') || 'addons';
+      const pathToAddons = core.getInput('path-to-addons') || './addons';
       const serverSoftware = core.getInput('server-software') || 'paper';
 
       core.info(`📋 Configuration:`);

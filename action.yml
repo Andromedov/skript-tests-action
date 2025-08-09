@@ -18,7 +18,7 @@ inputs:
   path-to-addons:
     description: 'Path to directory containing Skript addons'
     required: false
-    default: 'addons'
+    default: './addons'
   server-software:
     description: 'Server software to use (paper, spigot, bukkit)'
     required: false
