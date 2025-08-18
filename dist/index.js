@@ -34652,106 +34652,133 @@ class SkriptTester {
   }
 
   analyzeLogLine(line) {
-    if (line.includes('[Skript]')) {
-      if (line.includes("Can't understand this expression:") || 
-          line.includes("is not a world") ||
-          line.includes("is not a") ||
-          line.includes("There's no") ||
-          line.includes("Can't compare") ||
-          line.includes("Can't") ||
-          line.includes("error") || 
-          line.includes("Error") || 
-          line.includes("exception") || 
-          line.includes("Exception") ||
-          line.includes("Could not load") || 
-          line.includes("Failed to load") ||
-          line.includes("invalid") ||
-          line.includes("Invalid") ||
-          line.includes("unexpected") ||
-          line.includes("Unexpected")) {
+    if (!line.includes('[Skript]')) {
+      return;
+    }
+
+    const isSkriptError = (
+      (line.includes("Can't understand this expression:") && line.includes('Line ')) ||
+      (line.includes("There's no") && line.includes('Line ')) ||
+      (line.includes("Can't compare") && line.includes('Line ')) ||
+      (line.includes("is not a world") && line.includes('Line ')) ||
+      (line.includes("is not a") && line.includes('Line ') && !line.includes('valid')) ||
+      (line.includes("Could not load") && line.includes('.sk')) ||
+      (line.includes("Failed to load") && line.includes('.sk')) ||
+      (line.includes("invalid") && line.includes('Line ') && line.includes('.sk')) ||
+      (line.includes("Invalid") && line.includes('Line ') && line.includes('.sk')) ||
+      (line.includes("unexpected") && line.includes('Line ') && line.includes('.sk')) ||
+      (line.includes("Unexpected") && line.includes('Line ') && line.includes('.sk')) ||
+      (line.includes("compile") && line.includes("error") && line.includes('.sk')) ||
+      (line.includes("[ERROR]") && line.includes('.sk'))
+    );
+
+    if (isSkriptError) {
+      let scriptName = 'unknown';
+      
+      const parenthesesMatch = line.match(/\(([^)]+\.sk)\)/);
+      if (parenthesesMatch) {
+        scriptName = parenthesesMatch[1];
+      } else {
+        const fileMatch = line.match(/([^/\\\s]+\.sk)/);
+        if (fileMatch) {
+          scriptName = fileMatch[1];
+        }
+      }
+      
+      let lineNumber = 'unknown';
+      const lineMatch = line.match(/[Ll]ine (\d+)/);
+      if (lineMatch) {
+        lineNumber = lineMatch[1];
+      }
+      
+      const errorKey = `${scriptName}:${lineNumber}:${line.substring(0, 100)}`;
+      
+      if (!this.processedErrors) {
+        this.processedErrors = new Set();
+      }
+      
+      if (!this.processedErrors.has(errorKey)) {
+        this.processedErrors.add(errorKey);
         
-        let scriptName = 'unknown';
-        
-        const parenthesesMatch = line.match(/\(([^)]+\.sk)\)/);
-        if (parenthesesMatch) {
-          scriptName = parenthesesMatch[1];
-        } else {
-          const fileMatch = line.match(/([^/\\]+\.sk)/);
-          if (fileMatch) {
-            scriptName = fileMatch[1];
-          }
+        if (!this.results.failedScripts.includes(scriptName)) {
+          this.results.failedScripts.push(scriptName);
         }
         
-        let lineNumber = 'unknown';
-        const lineMatch = line.match(/Line (\d+):/);
-        if (lineMatch) {
-          lineNumber = lineMatch[1];
-        }
+        let errorMessage = this.formatErrorMessage(line, scriptName, lineNumber);
         
-        const errorKey = `${scriptName}:${lineNumber}`;
+        this.results.errors.push({
+          script: scriptName,
+          line: lineNumber,
+          error: errorMessage,
+          rawLine: line.trim()
+        });
         
-        if (!this.processedErrors) {
-          this.processedErrors = new Set();
-        }
-        if (!this.processedErrors.has(errorKey)) {
-          this.processedErrors.add(errorKey);
-          if (!this.results.failedScripts.includes(scriptName)) {
-            this.results.failedScripts.push(scriptName);
-          }
-          let errorMessage = line.trim();
+        core.error(`❌ Script error: ${scriptName} (Line ${lineNumber}): ${errorMessage}`);
+      }
+    }
+    
+    else if (this.isSuccessfulLoad(line)) {
+      const scriptMatch = line.match(/([^/\\\s]+\.sk)/);
+      if (scriptMatch) {
+        const scriptName = scriptMatch[1];
         
-          if (line.includes("Can't understand this expression:")) {
-            errorMessage = `Line ${lineNumber}: Can't understand expression in ${scriptName}`;
-          } else if (line.includes("is not a world")) {
-            errorMessage = `Line ${lineNumber}: Invalid world reference in ${scriptName}`;
-          } else if (line.includes("is not a")) {
-            errorMessage = `Line ${lineNumber}: Type error in ${scriptName}`;
+        if (!this.results.failedScripts.includes(scriptName)) {
+          if (!this.loadedScripts) {
+            this.loadedScripts = new Set();
           }
           
-          this.results.errors.push({
-            script: scriptName,
-            line: lineNumber,
-            error: errorMessage,
-            rawLine: line.trim()
-          });
-          
-          core.error(`❌ Script error: ${scriptName} (Line ${lineNumber})`);
-        }
-      }
-      
-      else if ((line.includes('Successfully loaded') || 
-                line.includes('Loaded') || 
-                line.includes('enabled')) && 
-               line.includes('.sk')) {
-        
-        const scriptMatch = line.match(/([^/\\]+\.sk)/);
-        if (scriptMatch) {
-          const scriptName = scriptMatch[1];
-          if (!this.results.failedScripts.includes(scriptName)) {
-            if (!this.loadedScripts) {
-              this.loadedScripts = new Set();
-            }
-            
-            if (!this.loadedScripts.has(scriptName)) {
-              this.loadedScripts.add(scriptName);
-              core.info(`✅ Script loaded: ${scriptName}`);
-            }
+          if (!this.loadedScripts.has(scriptName)) {
+            this.loadedScripts.add(scriptName);
+            core.info(`✅ Script loaded: ${scriptName}`);
           }
         }
       }
-      
-      else if (line.includes('Loading') && line.includes('.sk')) {
-        const scriptMatch = line.match(/([^/\\]+\.sk)/);
-        if (scriptMatch) {
-          const scriptName = scriptMatch[1];
-          core.info(`📄 Loading script: ${scriptName}`);
-        }
+    }
+    
+    else if (line.includes('Loading') && line.includes('.sk')) {
+      const scriptMatch = line.match(/([^/\\\s]+\.sk)/);
+      if (scriptMatch) {
+        const scriptName = scriptMatch[1];
+        core.info(`📄 Loading script: ${scriptName}`);
       }
-      
-      else if (line.includes('Successfully loaded') && 
-               (line.includes('script') || line.includes('file'))) {
-        core.info('✅ Skript finished loading scripts');
-      }
+    }
+    
+    else if (line.includes('Successfully loaded') && 
+            (line.includes('script') || line.includes('file'))) {
+      core.info('✅ Skript finished loading scripts');
+    }
+  }
+
+  isSuccessfulLoad(line) {
+    return (
+      (line.includes('Successfully loaded') && line.includes('.sk')) ||
+      (line.includes('Loaded script') && line.includes('.sk')) ||
+      (line.includes('enabled') && line.includes('.sk') && !line.includes('error')) ||
+      (line.includes('Loaded') && line.includes('script') && /\d+/.test(line))
+    );
+  }
+
+  formatErrorMessage(line, scriptName, lineNumber) {
+    if (line.includes("Can't understand this expression:")) {
+      return "Can't understand expression";
+    } else if (line.includes("is not a world")) {
+      return "Invalid world reference";
+    } else if (line.includes("is not a")) {
+      return "Type mismatch error";
+    } else if (line.includes("There's no")) {
+      return "Element not found";
+    } else if (line.includes("Can't compare")) {
+      return "Cannot compare values";
+    } else if (line.includes("Could not load") || line.includes("Failed to load")) {
+      return "Failed to load script";
+    } else if (line.includes("invalid") || line.includes("Invalid")) {
+      return "Invalid syntax";
+    } else if (line.includes("unexpected") || line.includes("Unexpected")) {
+      return "Unexpected syntax";
+    } else {
+      let message = line.replace(/.*\[Skript\]\s*/, '').trim();
+      message = message.replace(/\([^)]*\.sk[^)]*\)/, '').trim();
+      return message.length > 100 ? message.substring(0, 100) + '...' : message;
     }
   }
 
