@@ -323,12 +323,12 @@ class SkriptTester {
         if (this.reloadAfterStart) {
           core.info('🔄 Reloading scripts for detailed error analysis...');
           serverProcess.stdin.write('sk reload scripts\n');
-          await this.sleep(8000);
+          await this.sleep(25000);
         }
 
         core.info('🛑 Sending stop command to server...');
         serverProcess.stdin.write('stop\n');
-        await this.sleep(5000);
+        await this.sleep(25000);
         if (!serverProcess.killed) {
           core.info('🔪 Force killing server process...');
           serverProcess.kill('SIGTERM');
