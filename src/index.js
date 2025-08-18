@@ -30,11 +30,15 @@ class SkriptTester {
       const pathToSkripts = core.getInput('path-to-skripts') || './scripts';
       const pathToAddons = core.getInput('path-to-addons') || './addons';
       const serverSoftware = core.getInput('server-software') || 'paper';
-      const debug = core.getInput('debug') || 'false';
-
-      this.debugMode = debug;
-      if (debug) {
+      const debugInput = core.getInput('debug');
+      this.debugMode = (debugInput && debugInput.toLowerCase() === 'true');
+      if (this.debugMode) {
         core.info('🐛 Debug mode enabled');
+      }
+
+      const reloadInput = core.getInput('reload-after-start');
+      if (reloadInput && reloadInput.toLowerCase() === 'false') {
+        this.reloadAfterStart = false;
       }
 
       core.info(`📋 Configuration:`);
@@ -42,9 +46,8 @@ class SkriptTester {
       core.info(`  Skript: ${skriptVersion}`);
       core.info(`  Server: ${serverSoftware}`);
       core.info(`  Scripts path: ${pathToSkripts}`);
-      if (debug) {
-        core.info(`  Debug: enabled`);
-      }
+      core.info(`  Debug: ${this.debugMode ? 'enabled' : 'disabled'}`);
+      core.info(`  Reload after start: ${this.reloadAfterStart ? 'yes' : 'no'}`)
 
       await this.setupWorkDirectory();
       await this.downloadServer(serverSoftware, minecraftVersion);
@@ -319,13 +322,15 @@ class SkriptTester {
       }
       
       if (serverProcess && !serverProcess.killed) {
-        core.info('🔄 Reloading scripts for detailed error analysis...');
-        serverProcess.stdin.write('sk reload scripts\n');
-        await this.sleep(15000);
-        
+        if (this.reloadAfterStart) {
+          core.info('🔄 Reloading scripts for detailed error analysis...');
+          serverProcess.stdin.write('sk reload scripts\n');
+          await this.sleep(8000);
+        }
+
         core.info('🛑 Sending stop command to server...');
         serverProcess.stdin.write('stop\n');
-        await this.sleep(10000);
+        await this.sleep(5000);
         if (!serverProcess.killed) {
           core.info('🔪 Force killing server process...');
           serverProcess.kill('SIGTERM');
@@ -386,6 +391,18 @@ class SkriptTester {
           return;
         }
       }
+    }
+    
+    if (line.includes('Server has not responded') || line.includes('Thread dump') || line.includes('SkriptParser')) {
+      const scriptName = this.pendingError?.script || 'unknown';
+      const lineNumber = this.pendingError?.line || 'unknown';
+      this.registerError(
+        { script: scriptName, line: lineNumber },
+        'Server hang or parser crash while loading script',
+        line
+      );
+      this.pendingError = null;
+      return;
     }
 
     const reloadErrorPatterns = [
