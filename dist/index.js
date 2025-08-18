@@ -34334,7 +34334,7 @@ class SkriptTester {
     this.serverJar = null;
     this.processedErrors = new Set();
     this.loadedScripts = new Set();
-    this.pendingError = null; // Для багаточастинних повідомлень про помилки
+    this.pendingErrors = [];
     this.debugMode = false;
     this.results = {
       totalScripts: 0,
@@ -34359,9 +34359,7 @@ class SkriptTester {
       }
 
       const reloadInput = core.getInput('reload-after-start');
-      if (reloadInput && reloadInput.toLowerCase() === 'false') {
-        this.reloadAfterStart = false;
-      }
+      this.reloadAfterStart = reloadInput && reloadInput.toLowerCase() === 'true';
 
       core.info(`📋 Configuration:`);
       core.info(`  Minecraft: ${minecraftVersion}`);
@@ -34689,45 +34687,43 @@ class SkriptTester {
     if (errorStartMatch) {
       const lineNumber = errorStartMatch[1];
       const scriptName = errorStartMatch[2];
-
-      this.pendingError = {
+      this.pendingErrors.push({
         script: scriptName,
         line: lineNumber,
         timestamp: Date.now()
-      };
-
+      });
       if (this.debugMode) {
-        core.info(`🐛 DEBUG: Found error start - Line ${lineNumber} in ${scriptName}`);
+        core.info(`🐛 DEBUG: Added pending error for ${scriptName} at line ${lineNumber}`);
       }
       return;
     }
 
-    if (this.pendingError && Date.now() - this.pendingError.timestamp > 2000) {
-      this.registerError(this.pendingError, "Syntax error (no further details from Skript)", line);
-      this.pendingError = null;
-    }
-
-    if (this.pendingError && Date.now() - this.pendingError.timestamp < 3000) {
-      const errorDescMatch = line.match(/\[Skript\]\s+(.+)/);
-      if (errorDescMatch) {
-        const errorDescription = errorDescMatch[1].trim();
-        if (!this.isGeneralMessage(errorDescription)) {
-          this.registerError(this.pendingError, errorDescription, line);
-          this.pendingError = null;
-          return;
+    if (this.pendingErrors.length > 0) {
+      const stillPending = [];
+      for (const pending of this.pendingErrors) {
+        const age = Date.now() - pending.timestamp;
+        if (age > 2000) {
+          this.registerError(pending, "Syntax error (no further details from Skript)", line);
+        } else {
+          const errorDescMatch = line.match(/\[Skript\]\s+(.+)/);
+          if (errorDescMatch) {
+            const errorDescription = errorDescMatch[1].trim();
+            if (!this.isGeneralMessage(errorDescription)) {
+              this.registerError(pending, errorDescription, line);
+              continue;
+            }
+          }
+          stillPending.push(pending);
         }
       }
+      this.pendingErrors = stillPending;
     }
 
     if (line.includes('Server has not responded') || line.includes('Thread dump') || line.includes('SkriptParser')) {
-      const scriptName = this.pendingError?.script || 'unknown';
-      const lineNumber = this.pendingError?.line || 'unknown';
-      this.registerError(
-        { script: scriptName, line: lineNumber },
-        'Server hang or parser crash while loading script',
-        line
-      );
-      this.pendingError = null;
+      for (const pending of this.pendingErrors) {
+        this.registerError(pending, 'Server hang or parser crash while loading script', line);
+      }
+      this.pendingErrors = [];
       return;
     }
 
