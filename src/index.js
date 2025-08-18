@@ -367,24 +367,28 @@ class SkriptTester {
     if (errorStartMatch) {
       const lineNumber = errorStartMatch[1];
       const scriptName = errorStartMatch[2];
-      
+
       this.pendingError = {
         script: scriptName,
         line: lineNumber,
         timestamp: Date.now()
       };
-      
+
       if (this.debugMode) {
         core.info(`🐛 DEBUG: Found error start - Line ${lineNumber} in ${scriptName}`);
       }
       return;
     }
 
+    if (this.pendingError && Date.now() - this.pendingError.timestamp > 2000) {
+      this.registerError(this.pendingError, "Syntax error (no further details from Skript)", line);
+      this.pendingError = null;
+    }
+
     if (this.pendingError && Date.now() - this.pendingError.timestamp < 3000) {
       const errorDescMatch = line.match(/\[Skript\]\s+(.+)/);
       if (errorDescMatch) {
         const errorDescription = errorDescMatch[1].trim();
-        
         if (!this.isGeneralMessage(errorDescription)) {
           this.registerError(this.pendingError, errorDescription, line);
           this.pendingError = null;
@@ -392,7 +396,7 @@ class SkriptTester {
         }
       }
     }
-    
+
     if (line.includes('Server has not responded') || line.includes('Thread dump') || line.includes('SkriptParser')) {
       const scriptName = this.pendingError?.script || 'unknown';
       const lineNumber = this.pendingError?.line || 'unknown';
@@ -427,9 +431,9 @@ class SkriptTester {
         let scriptName = 'unknown';
         let lineNumber = 'unknown';
 
-        const scriptMatch = line.match(/\(([^)]+\.sk)\)/) || 
-                           line.match(/([^/\\\s]+\.sk)/) ||
-                           line.match(/in\s+([^/\\\s]+\.sk)/);
+        const scriptMatch = line.match(/\(([^)]+\.sk)\)/) ||
+                          line.match(/([^/\\\s]+\.sk)/) ||
+                          line.match(/in\s+([^/\\\s]+\.sk)/);
         if (scriptMatch) {
           scriptName = scriptMatch[1];
         }
@@ -439,8 +443,11 @@ class SkriptTester {
           lineNumber = lineMatch[1];
         }
 
-        this.registerError({ script: scriptName, line: lineNumber }, 
-                          line.replace(/.*\[Skript\]\s*/, '').trim(), line);
+        this.registerError(
+          { script: scriptName, line: lineNumber },
+          line.replace(/.*\[Skript\]\s*/, '').trim(),
+          line
+        );
         return;
       }
     }
