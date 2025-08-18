@@ -34334,6 +34334,8 @@ class SkriptTester {
     this.serverJar = null;
     this.processedErrors = new Set();
     this.loadedScripts = new Set();
+    this.pendingErrors = [];
+    this.debugMode = false;
     this.results = {
       totalScripts: 0,
       passedScripts: 0,
@@ -34350,12 +34352,22 @@ class SkriptTester {
       const pathToSkripts = core.getInput('path-to-skripts') || './scripts';
       const pathToAddons = core.getInput('path-to-addons') || './addons';
       const serverSoftware = core.getInput('server-software') || 'paper';
+      const debugInput = core.getInput('debug');
+      this.debugMode = (debugInput && debugInput.toLowerCase() === 'true');
+      if (this.debugMode) {
+        core.info('🐛 Debug mode enabled');
+      }
+
+      const reloadInput = core.getInput('reload-after-start');
+      this.reloadAfterStart = reloadInput && reloadInput.toLowerCase() === 'true';
 
       core.info(`📋 Configuration:`);
       core.info(`  Minecraft: ${minecraftVersion}`);
       core.info(`  Skript: ${skriptVersion}`);
       core.info(`  Server: ${serverSoftware}`);
       core.info(`  Scripts path: ${pathToSkripts}`);
+      core.info(`  Debug: ${this.debugMode ? 'enabled' : 'disabled'}`);
+      core.info(`  Reload after start: ${this.reloadAfterStart ? 'yes' : 'no'}`)
 
       await this.setupWorkDirectory();
       await this.downloadServer(serverSoftware, minecraftVersion);
@@ -34385,7 +34397,7 @@ class SkriptTester {
   }
 
   async downloadServer(serverSoftware, minecraftVersion) {
-    core.info(`🔽 Downloading ${serverSoftware} server v${minecraftVersion}...`);
+    core.info(`📽 Downloading ${serverSoftware} server v${minecraftVersion}...`);
     
     let downloadUrl;
     if (serverSoftware.toLowerCase() === 'paper') {
@@ -34427,7 +34439,7 @@ class SkriptTester {
   }
 
   async downloadSkript(version) {
-    core.info(`🔽 Downloading Skript v${version}...`);
+    core.info(`📽 Downloading Skript v${version}...`);
     
     const downloadUrl = `https://github.com/SkriptLang/Skript/releases/download/${version}/Skript-${version}.jar`;
     const skriptPath = await tc.downloadTool(downloadUrl);
@@ -34453,7 +34465,7 @@ class SkriptTester {
   }
 
   async copyScripts(scriptsPath) {
-    core.info('📝 Copying Skript scripts...');
+    core.info('📂 Copying Skript scripts...');
     const skriptScriptsDir = path.join(this.workDir, 'plugins', 'Skript', 'scripts');
     
     if (!await fs.pathExists(scriptsPath)) {
@@ -34630,9 +34642,15 @@ class SkriptTester {
       }
       
       if (serverProcess && !serverProcess.killed) {
+        if (this.reloadAfterStart) {
+          core.info('🔄 Reloading scripts for detailed error analysis...');
+          serverProcess.stdin.write('sk reload scripts\n');
+          await this.sleep(15000);
+        }
+
         core.info('🛑 Sending stop command to server...');
         serverProcess.stdin.write('stop\n');
-        await this.sleep(10000);
+        await this.sleep(15000);
         if (!serverProcess.killed) {
           core.info('🔪 Force killing server process...');
           serverProcess.kill('SIGTERM');
@@ -34652,106 +34670,210 @@ class SkriptTester {
   }
 
   analyzeLogLine(line) {
-    if (line.includes('[Skript]')) {
-      if (line.includes("Can't understand this expression:") || 
-          line.includes("is not a world") ||
-          line.includes("is not a") ||
-          line.includes("There's no") ||
-          line.includes("Can't compare") ||
-          line.includes("Can't") ||
-          line.includes("error") || 
-          line.includes("Error") || 
-          line.includes("exception") || 
-          line.includes("Exception") ||
-          line.includes("Could not load") || 
-          line.includes("Failed to load") ||
-          line.includes("invalid") ||
-          line.includes("Invalid") ||
-          line.includes("unexpected") ||
-          line.includes("Unexpected")) {
-        
-        let scriptName = 'unknown';
-        
-        const parenthesesMatch = line.match(/\(([^)]+\.sk)\)/);
-        if (parenthesesMatch) {
-          scriptName = parenthesesMatch[1];
+    if (this.debugMode && line.includes('[Skript]')) {
+      core.info(`🐛 DEBUG Skript log: ${line.trim()}`);
+    }
+
+    if (!line.includes('[Skript]')) {
+      return;
+    }
+
+    if (line.includes('Reloading scripts')) {
+      core.info('🔄 Skript is reloading scripts...');
+      return;
+    }
+
+    const errorStartMatch = line.match(/\[Skript\]\s+Line\s+(\d+):\s+\(([^)]+\.sk)\)/);
+    if (errorStartMatch) {
+      const lineNumber = errorStartMatch[1];
+      const scriptName = errorStartMatch[2];
+      this.pendingErrors.push({
+        script: scriptName,
+        line: lineNumber,
+        timestamp: Date.now()
+      });
+      if (this.debugMode) {
+        core.info(`🐛 DEBUG: Added pending error for ${scriptName} at line ${lineNumber}`);
+      }
+      return;
+    }
+
+    if (this.pendingErrors.length > 0) {
+      const stillPending = [];
+      for (const pending of this.pendingErrors) {
+        const age = Date.now() - pending.timestamp;
+        if (age > 2000) {
+          this.registerError(pending, "Syntax error (no further details from Skript)", line);
         } else {
-          const fileMatch = line.match(/([^/\\]+\.sk)/);
-          if (fileMatch) {
-            scriptName = fileMatch[1];
+          const errorDescMatch = line.match(/\[Skript\]\s+(.+)/);
+          if (errorDescMatch) {
+            const errorDescription = errorDescMatch[1].trim();
+            if (!this.isGeneralMessage(errorDescription)) {
+              this.registerError(pending, errorDescription, line);
+              continue;
+            }
           }
+          stillPending.push(pending);
         }
-        
+      }
+      this.pendingErrors = stillPending;
+    }
+
+    if (line.includes('Server has not responded') || line.includes('Thread dump') || line.includes('SkriptParser')) {
+      for (const pending of this.pendingErrors) {
+        this.registerError(pending, 'Server hang or parser crash while loading script', line);
+      }
+      this.pendingErrors = [];
+      return;
+    }
+
+    const reloadErrorPatterns = [
+      /Can't understand this expression:/,
+      /There's no/,
+      /Can't compare/,
+      /is not a world/,
+      /is not a .+/,
+      /Could not load.*\.sk/,
+      /Failed to load.*\.sk/,
+      /invalid.*line \d+/i,
+      /unexpected.*line \d+/i,
+      /compile.*error/i,
+      /\[ERROR\].*\.sk/,
+      /Error.*\.sk/,
+      /Cannot.*\.sk/,
+      /Unable.*\.sk/
+    ];
+
+    for (const pattern of reloadErrorPatterns) {
+      if (pattern.test(line)) {
+        let scriptName = 'unknown';
         let lineNumber = 'unknown';
-        const lineMatch = line.match(/Line (\d+):/);
+
+        const scriptMatch = line.match(/\(([^)]+\.sk)\)/) ||
+                          line.match(/([^/\\\s]+\.sk)/) ||
+                          line.match(/in\s+([^/\\\s]+\.sk)/);
+        if (scriptMatch) {
+          scriptName = scriptMatch[1];
+        }
+
+        const lineMatch = line.match(/line\s+(\d+)/i) || line.match(/Line\s+(\d+)/);
         if (lineMatch) {
           lineNumber = lineMatch[1];
         }
-        
-        const errorKey = `${scriptName}:${lineNumber}`;
-        
-        if (!this.processedErrors) {
-          this.processedErrors = new Set();
-        }
-        if (!this.processedErrors.has(errorKey)) {
-          this.processedErrors.add(errorKey);
-          if (!this.results.failedScripts.includes(scriptName)) {
-            this.results.failedScripts.push(scriptName);
-          }
-          let errorMessage = line.trim();
-        
-          if (line.includes("Can't understand this expression:")) {
-            errorMessage = `Line ${lineNumber}: Can't understand expression in ${scriptName}`;
-          } else if (line.includes("is not a world")) {
-            errorMessage = `Line ${lineNumber}: Invalid world reference in ${scriptName}`;
-          } else if (line.includes("is not a")) {
-            errorMessage = `Line ${lineNumber}: Type error in ${scriptName}`;
-          }
-          
-          this.results.errors.push({
-            script: scriptName,
-            line: lineNumber,
-            error: errorMessage,
-            rawLine: line.trim()
-          });
-          
-          core.error(`❌ Script error: ${scriptName} (Line ${lineNumber})`);
-        }
+
+        this.registerError(
+          { script: scriptName, line: lineNumber },
+          line.replace(/.*\[Skript\]\s*/, '').trim(),
+          line
+        );
+        return;
       }
-      
-      else if ((line.includes('Successfully loaded') || 
-                line.includes('Loaded') || 
-                line.includes('enabled')) && 
-               line.includes('.sk')) {
+    }
+
+    this.checkSuccessfulLoad(line);
+  }
+
+  isGeneralMessage(message) {
+    const generalPatterns = [
+      /^Loaded \d+/,
+      /^Successfully loaded/,
+      /^Loading/,
+      /^Finished loading/,
+      /^Variables/,
+      /^Reloading/,
+      /^Reloaded/,
+      /^Disabled/,
+      /^Enabled/,
+      /^\s*$/
+    ];
+
+    return generalPatterns.some(pattern => pattern.test(message));
+  }
+
+  registerError(errorInfo, errorDescription, rawLine) {
+    const errorKey = `${errorInfo.script}:${errorInfo.line}:${errorDescription.substring(0, 50)}`;
+    
+    if (this.processedErrors.has(errorKey)) {
+      return; // Уже обробили цю помилку
+    }
+
+    this.processedErrors.add(errorKey);
+
+    if (!this.results.failedScripts.includes(errorInfo.script)) {
+      this.results.failedScripts.push(errorInfo.script);
+    }
+
+    const formattedError = this.formatErrorMessage(errorDescription);
+
+    this.results.errors.push({
+      script: errorInfo.script,
+      line: errorInfo.line,
+      error: formattedError,
+      rawLine: rawLine.trim()
+    });
+
+    core.error(`❌ Script error: ${errorInfo.script} (Line ${errorInfo.line}): ${formattedError}`);
+  }
+
+  checkSuccessfulLoad(line) {
+    const summaryMatch = line.match(/\[Skript\]\s+Loaded\s+(\d+)\s+scripts?/);
+    if (summaryMatch) {
+      const loadedCount = parseInt(summaryMatch[1]);
+      this.results.totalScripts = Math.max(this.results.totalScripts, loadedCount);
+      core.info(`✅ Skript loaded ${loadedCount} scripts total`);
+      return;
+    }
+
+    const individualLoadPatterns = [
+      /Successfully loaded.*([^/\\\s]+\.sk)/,
+      /Loaded script.*([^/\\\s]+\.sk)/,
+      /enabled.*([^/\\\s]+\.sk)/
+    ];
+
+    for (const pattern of individualLoadPatterns) {
+      const match = line.match(pattern);
+      if (match) {
+        const scriptName = match[1];
         
-        const scriptMatch = line.match(/([^/\\]+\.sk)/);
-        if (scriptMatch) {
-          const scriptName = scriptMatch[1];
-          if (!this.results.failedScripts.includes(scriptName)) {
-            if (!this.loadedScripts) {
-              this.loadedScripts = new Set();
-            }
-            
-            if (!this.loadedScripts.has(scriptName)) {
-              this.loadedScripts.add(scriptName);
+        if (!this.results.failedScripts.includes(scriptName)) {
+          if (!this.loadedScripts.has(scriptName)) {
+            this.loadedScripts.add(scriptName);
+            if (this.debugMode) {
               core.info(`✅ Script loaded: ${scriptName}`);
             }
           }
         }
+        return;
       }
-      
-      else if (line.includes('Loading') && line.includes('.sk')) {
-        const scriptMatch = line.match(/([^/\\]+\.sk)/);
-        if (scriptMatch) {
-          const scriptName = scriptMatch[1];
-          core.info(`📄 Loading script: ${scriptName}`);
-        }
+    }
+
+    if (line.includes('Loading') && line.includes('.sk')) {
+      const scriptMatch = line.match(/([^/\\\s]+\.sk)/);
+      if (scriptMatch && this.debugMode) {
+        core.info(`📄 Loading script: ${scriptMatch[1]}`);
       }
-      
-      else if (line.includes('Successfully loaded') && 
-               (line.includes('script') || line.includes('file'))) {
-        core.info('✅ Skript finished loading scripts');
-      }
+    }
+  }
+
+  formatErrorMessage(description) {
+    if (description.includes("Can't understand this expression")) {
+      return "Can't understand expression";
+    } else if (description.includes("is not a world")) {
+      return "Invalid world reference";
+    } else if (description.includes("is not a")) {
+      return "Type mismatch error";
+    } else if (description.includes("There's no")) {
+      return "Element not found";
+    } else if (description.includes("Can't compare")) {
+      return "Cannot compare values";
+    } else if (description.includes("Could not load") || description.includes("Failed to load")) {
+      return "Failed to load script";
+    } else if (description.toLowerCase().includes("invalid")) {
+      return "Invalid syntax";
+    } else if (description.toLowerCase().includes("unexpected")) {
+      return "Unexpected syntax";
+    } else {
+      return description.length > 100 ? description.substring(0, 100) + '...' : description;
     }
   }
 
@@ -34785,41 +34907,6 @@ class SkriptTester {
 
   async sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
-  }
-
-  async analyzeServerOutput(output) {
-    core.info('🔍 Performing backup analysis of server output...');
-    
-    const lines = output.split('\n');
-    const scriptMessages = lines.filter(line => 
-      line.includes('[Skript]') || 
-      line.includes('error') ||
-      line.includes('Error') ||
-      line.includes('exception') ||
-      line.includes('Exception')
-    );
-
-    for (const line of scriptMessages) {
-      if ((line.includes('error') || line.includes('Error') || 
-          line.includes('exception') || line.includes('Exception')) &&
-          line.includes('[Skript]')) {
-        
-        const scriptMatch = line.match(/([^/\\]+\.sk)/);
-        if (scriptMatch) {
-          const scriptName = scriptMatch[1];
-          if (!this.results.failedScripts.includes(scriptName)) {
-            this.results.failedScripts.push(scriptName);
-            this.results.errors.push({
-              script: scriptName,
-              error: line.trim()
-            });
-            core.warning(`🔍 Additional error found: ${scriptName}`);
-          }
-        }
-      }
-    }
-
-    this.results.passedScripts = Math.max(0, this.results.totalScripts - this.results.failedScripts.length);
   }
 
   outputResults() {

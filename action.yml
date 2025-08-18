@@ -23,6 +23,14 @@ inputs:
     description: 'Server software to use (paper, spigot, bukkit)'
     required: false
     default: 'paper'
+  debug:
+    description: 'Enable debug logging'
+    required: false
+    default: 'false'
+  reload-after-start:
+    description: 'Restart skript for better detection of broken skripts (server may not respond)'
+    required: false
+    default: 'false'
 
 outputs:
   test-results:
